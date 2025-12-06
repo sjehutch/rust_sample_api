@@ -117,6 +117,7 @@ This project teaches:
 | [ ] ✅ Convert store to SQLite using `sqlx`            |
 | [ ] (Optional) Add pagination support                  |
 | [ ] (Optional) Add API authentication                  |
+| [ ] (Optional) Add AI key config for upload descriptions (OpenAI default; consider Grok/other vision) |
 | [ ] (Optional) Add metrics endpoint (Prometheus style) |
 
 ---

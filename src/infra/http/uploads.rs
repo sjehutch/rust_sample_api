@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::{env, path::Path};
+use base64::Engine;
 
 use axum::{
     extract::Multipart,
@@ -16,6 +17,7 @@ use super::AppState;
 pub struct UploadResponse {
     pub id: String,
     pub path: String,
+    pub description: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -75,12 +77,72 @@ pub async fn upload_image(
 
     tracing::info!(file = %full_path.display(), "Image uploaded to directory");
 
+    // Attempt to describe the image via OpenAI Vision; failure should not block the upload response.
+    let description = describe_image(&full_path).await.ok();
+
     let response = UploadResponse {
         id,
         path: full_path.display().to_string(),
+        description,
     };
 
     Ok((StatusCode::CREATED, Json(response)))
+}
+
+async fn describe_image(path: &Path) -> Result<String, String> {
+    let api_key = env::var("OPENAI_API_KEY")
+        .map_err(|_| "OPENAI_API_KEY env var not set; skipping description".to_string())?;
+
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("Failed to read image for description: {e}"))?;
+
+    let mime_hint = if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        match ext.to_lowercase().as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "webp" => "image/webp",
+            "avif" => "image/avif",
+            _ => "application/octet-stream",
+        }
+    } else {
+        "application/octet-stream"
+    };
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let data_url = format!("data:{mime_hint};base64,{b64}");
+
+    let client = reqwest::Client::new();
+    let payload = serde_json::json!({
+        "model": "gpt-4o-mini",
+        "messages": [{
+            "role": "user",
+            "content": [
+                { "type": "text", "text": "Briefly describe this image." },
+                { "type": "image_url", "image_url": { "url": data_url } }
+            ]
+        }],
+        "max_tokens": 80
+    });
+
+    let resp = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Vision request failed: {e}"))?;
+
+    let value: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse vision response: {e}"))?;
+
+    value["choices"]
+        .get(0)
+        .and_then(|c| c["message"]["content"].as_str())
+        .map(|s| s.trim().to_string())
+        .ok_or_else(|| "Vision response missing description".to_string())
 }
 
 pub fn routes() -> Router<AppState> {
@@ -141,5 +203,6 @@ mod tests {
         let saved_path = Path::new(&parsed.path);
         assert!(saved_path.exists(), "file should have been written");
         assert_eq!(saved_path.parent().unwrap().file_name().unwrap(), "uploads");
+        assert!(parsed.description.is_none(), "no description without OPENAI_API_KEY");
     }
 }

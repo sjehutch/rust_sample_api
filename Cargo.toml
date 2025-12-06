@@ -17,6 +17,7 @@ utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 uuid = { version = "1.11.0", features = ["v4"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt"] }
+base64 = "0.22"
 
 [dev-dependencies]
 tower = "0.5"
